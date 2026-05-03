@@ -47,12 +47,13 @@ try:
     
     # Receive challenge
     challenge_data = connected_socket.recv(4096).decode().strip()
+    print(f"DEBUG challenge bytes: {list(challenge.encode())}")
     
     if not challenge_data or ":" not in challenge_data:
         print("[-] Error: Received invalid challenge format from server.")
         sys.exit(1)
         
-    challenge = challenge_data.split(":")[1]
+    challenge = challenge_data.split(":")[1].strip()
 
     # Compute HMAC-SHA256
     mac = hmac.new(
