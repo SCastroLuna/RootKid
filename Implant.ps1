@@ -74,6 +74,13 @@ while ($true) {
             $writer = New-Object System.IO.StreamWriter($stream)
             $writer.AutoFlush = $true
 
+            Log "Client connected, sending challenge..."
+            $writer.WriteLine("CHALLENGE:$challenge")
+            $writer.Flush()
+            $stream.Flush()
+            Log "Challenge sent: $challenge"
+
+            
             # HMAC Challenge-Response
             $challenge = Get-Random -Maximum 1000000000
             $writer.Flush()
