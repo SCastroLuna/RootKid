@@ -89,12 +89,6 @@ while ($true) {
                 Log "EXCEPTION: $($_.Exception.Message)"
                 Log "STACK: $($_.ScriptStackTrace)"
             }
-            try {
-                $response = $reader.ReadLine()
-            } catch {
-                # If the read times out, response is null, and we skip to finally block
-                $response = $null
-            }
 
             Log "Challenge sent: $challenge"
             Log "Expected HMAC: $expected"
