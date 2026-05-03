@@ -47,7 +47,7 @@ try:
     
     # Receive challenge
     challenge_data = connected_socket.recv(4096).decode().strip()
-    print(f"DEBUG challenge bytes: {list(challenge.encode())}")
+    print(f"DEBUG challenge bytes: {list(challenge_data.encode())}")
     
     if not challenge_data or ":" not in challenge_data:
         print("[-] Error: Received invalid challenge format from server.")
