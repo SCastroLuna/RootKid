@@ -90,6 +90,20 @@ while ($true) {
                 Log "STACK: $($_.ScriptStackTrace)"
             }
 
+            $hmacKey = [System.Text.Encoding]::UTF8.GetBytes($SharedSecret)
+            $hmac = New-Object System.Security.Cryptography.HMACSHA256
+            $hmac.Key = $hmacKey
+            $challengeBytes = [System.Text.Encoding]::UTF8.GetBytes("$challenge")
+            $expectedBytes = $hmac.ComputeHash($challengeBytes)
+            $expected = -join ($expectedBytes | ForEach-Object { $_.ToString("x2") })
+            
+            if ($response -eq $expected) {
+                $writer.WriteLine("OK - Using port $CurrentReversePort")
+                # spawn reverse shell to client IP on $CurrentReversePort
+            } else {
+                $writer.WriteLine("DENIED")
+            }
+
             Log "Challenge sent: $challenge"
             Log "Expected HMAC: $expected"
             Log "Received response: $response"
