@@ -63,29 +63,32 @@ while ($true) {
         }
 
         try {
-            $client = $listener.AcceptTcpClient()
-            $stream = $client.GetStream()
-            
-            # --- THE FIX: 5-second timeout prevents deadlock from scanners ---
-            $stream.ReadTimeout = 20000
-            $stream.WriteTimeout = 20000
-            
-            $reader = New-Object System.IO.StreamReader($stream)
-            $writer = New-Object System.IO.StreamWriter($stream)
-            $writer.AutoFlush = $true
-
-            Log "Client connected, sending challenge..."
-            $writer.WriteLine("CHALLENGE:$challenge")
-            $writer.Flush()
-            $stream.Flush()
-            Log "Challenge sent: $challenge"
-
-            
-            # HMAC Challenge-Response
-            $challenge = Get-Random -Maximum 1000000000
-            $writer.Flush()
-            $stream.Flush()
-            
+            try {
+                $client = $listener.AcceptTcpClient()
+                Log "Accepted connection from $($client.Client.RemoteEndPoint)"
+                
+                $stream = $client.GetStream()
+                $stream.ReadTimeout = 20000
+                $stream.WriteTimeout = 20000
+                
+                $reader = New-Object System.IO.StreamReader($stream)
+                $writer = New-Object System.IO.StreamWriter($stream)
+                $writer.AutoFlush = $true
+                
+                Log "Sending challenge..."
+                $challenge = Get-Random -Maximum 1000000000
+                $writer.WriteLine("CHALLENGE:$challenge")
+                $writer.Flush()
+                $stream.Flush()
+                Log "Challenge sent: $challenge"
+                
+                $response = $reader.ReadLine()
+                Log "Got response: $response"
+                
+            } catch {
+                Log "EXCEPTION: $($_.Exception.Message)"
+                Log "STACK: $($_.ScriptStackTrace)"
+            }
             try {
                 $response = $reader.ReadLine()
             } catch {
